@@ -1,0 +1,267 @@
+#!/usr/bin/env python
+# -*- coding: UTF-8 -*-
+
+from __future__ import print_function
+
+import argparse
+import sys
+import os
+import StringIO
+import ConfigParser
+import textwrap
+import logging
+import kazoo
+
+from kazoo.client import KazooClient
+from kazoo.client import KazooState
+from os.path import expanduser
+
+
+# Program version.
+VERSION="0.1"
+
+# The two possible locations of this program's configuration file.
+CONF_IN_HOMEDIR=expanduser("~/.mrconfig")
+CONF_IN_ETC="/etc/mrconfig.conf"
+
+
+def readFromConfig(path, options):
+    """Read the options needed to connect to a ZooKeeper quorum from a file."""
+
+    try:
+        with open(path, 'r') as conf:
+            conf_str = '[root]\n' + conf.read()
+            conf_fp = StringIO.StringIO(conf_str)
+            config = ConfigParser.RawConfigParser()
+            config.readfp(conf_fp)
+    except IOError:
+        logging.warn("Failed to read config file at {0}.".format(path))
+        return
+
+    for option in ("zookeeper_quorum", "configuration_znode"):
+        try:
+            options[option] = config.get('root', option)
+            logging.info("Read option `{0}' from {1}: {2}".format(option, path, options[option]))
+        except:
+            pass
+
+
+def check_options_or_exit(options):
+    """Check if the required options were set, and quit if that is not the case."""
+
+    if not "zookeeper_quorum" in options or not "configuration_znode" in options:
+        message = ("Look, I can't connect to the ZooKeeper quorum without its address and the path "
+                "to the configuration root znode. "
+                "Either add a configuration file in ~/.mrconfig or /etc/mrconfig.conf, "
+                "or pass these parameters as arguments.")
+        print("Hello there!")
+        print("")
+        print(textwrap.fill(message, 80))
+        sys.exit(2)
+
+
+def check_config_znode_or_quit(zk, znode):
+    """Check if a node exists, and quit if it doesn't."""
+
+    if zk.exists(znode) is None:
+        print("Znode {0} does not exist (yet).".format(znode), file=sys.stderr)
+        sys.exit(2)
+
+
+def path_from(parent, child):
+    """Join the name of parent node with a child name into a complete valid path."""
+
+    if parent[-1:] == "/":
+        return parent + child
+    else:
+        return parent + "/" + child
+
+
+def connect(options, read_only=False):
+    """Connect to the ZooKeeper quorum, and assert that the root configuration node exists."""
+
+    check_options_or_exit(options)
+
+    logging.info("Connecting to ZooKeeper quorum at {0}. Znode is {1}.".format(
+                options["zookeeper_quorum"], options["configuration_znode"]))
+
+    zk = KazooClient(hosts=options["zookeeper_quorum"], read_only=read_only)
+    zk.start()
+    if not zk.state == KazooState.CONNECTED:
+        print("Connection to ZooKeeper quorum failed, check your settings.", file=sys.stderr)
+        sys.exit(2)
+
+    check_config_znode_or_quit(zk, options["configuration_znode"])
+    
+    return zk
+
+
+def set_config(zk, options, name, filename):
+    """Upload the contents for the named configuration node."""
+
+    znode = options["configuration_znode"]
+    confnode = path_from(znode, name)
+
+    if filename == '-':
+        # Read from stdin when - is passed as filename.
+        content = sys.stdin.read()
+    else:
+        with open(filename, "r") as f:
+            content = f.read()
+
+    confnode_exists = (zk.exists(confnode) is not None)
+
+    try:
+        if confnode_exists:
+            zk.set(confnode, content)
+        else:
+            zk.ensure_path(znode)
+            zk.create(confnode, content)
+    except:
+        print("Unexpected error:", sys.exc_info()[0])
+        sys.exit(2)
+    else:
+        print("Node {0} successfully written.".format(confnode))
+
+
+def get_config(zk, options, name):
+    """Download the contents of a node."""
+
+    znode = options["configuration_znode"]
+    confnode = path_from(znode, name)
+    try:
+        content = zk.get(confnode)[0]
+    except kazoo.exceptions.NoNodeError:
+        print("Node does not exist: {0}".format(confnode), file=sys.stderr)
+        sys.exit(2)
+    else:
+        print(content)
+
+
+def delete_config(zk, options, name):
+    """Delete a node, if it exists."""
+
+    znode = options["configuration_znode"]
+    confnode = path_from(znode, name)
+    try:
+        zk.delete(confnode)
+    except kazoo.exceptions.NoNodeError:
+        print("Node does not exist: {0}.".format(confnode), file=sys.stderr)
+        sys.exit(2)
+    except:
+        print("Node does not exist: {0}.".format(confnode), file=sys.stderr)
+        sys.exit(2)
+    else:
+        print("Successfully deleted node {0}.".format(confnode))
+
+
+def list_configs(zk, options):
+    """Print a list of all the configation nodes directly under the parent node."""
+
+    znode = options["configuration_znode"]
+    children = zk.get_children(znode)
+
+    print(znode)
+    if len(children) == 0:
+        print("  (no child nodes)")
+    else: 
+        # Print the children with a character-art path in front of it.
+        prev = None
+        for child in children:
+            if prev is not None:
+                print(" {0} {1}".format("├", prev))
+            prev = child
+        print(" {0} {1}".format("└", prev))
+
+
+if __name__ == '__main__':
+    """Gather arguments and prepare logging."""
+
+    options = {}
+
+    # Configure argparse with all the options for this program.
+    parser = argparse.ArgumentParser(add_help=False, 
+            formatter_class=argparse.RawDescriptionHelpFormatter,
+            description="Manage configuration files stored in a ZooKeeper quorum.",
+            epilog="To write the contents of stdin to a configuration node, do something "
+                "like this: "
+                "\n\n"
+                "    cat MyConf.yml | mrconfig --set NAME -"
+                "\n\n")
+
+    # General help and usage.
+    parser.add_argument("-h", "--help", 
+            help="Show this help message and exit.",
+            action="help")
+    parser.add_argument("--version", action="version",
+            help="Show program's version number and exit.",
+            version="%(prog)s " + VERSION)
+    parser.add_argument("-v", "--verbose", default=0,
+            help="Be a bit more chatty about what we're doing.",
+            action="count")
+
+    # The main modes of operation. These are mutually exclusive; only one task can be performed
+    # at a time.
+    mode_group = parser.add_mutually_exclusive_group()
+    mode_group.add_argument("-l", "--list", action="store_true",
+            help="List all the configs stored in the ZooKeeper quorum.")
+    mode_group.add_argument("--set", nargs=2, metavar=("NAME", "FILE"),
+            help="Upload a configuration file and place it under this name.")
+    mode_group.add_argument("--get", metavar="NAME",
+            help="Download named config and output it to stdout.")
+    mode_group.add_argument("--delete", metavar="NAME",
+            help="Delete named config. This action cannot be undone!")
+
+    # ZooKeeper settings. These override any settings found in the mrconfig settings file.
+    parser.add_argument("--zookeepers", help="Comma-separated address of the ZooKeeper quorum.")
+    parser.add_argument("--config-znode", help="Path to the root configuration znode.")
+
+    if len(sys.argv) == 1:
+        # Print help when no arguments are passed to us.
+        parser.print_help()
+        sys.exit(1)
+
+    args = parser.parse_args()
+    verbosity = args.verbose
+    
+    # Have the logging used match the verbosity desired by the user.
+    if verbosity == 1:
+        logging.basicConfig(level=logging.WARN)
+    elif verbosity > 1:
+        logging.basicConfig(level=logging.INFO)
+    else:
+        logging.basicConfig(level=logging.ERROR)
+    
+    if os.path.isfile(CONF_IN_HOMEDIR):
+        # User settings, these take precedence over system settings.
+        readFromConfig(CONF_IN_HOMEDIR, options)
+    elif os.path.isfile(CONF_IN_ETC):
+        # System settings.
+        readFromConfig(CONF_IN_ETC, options)
+
+    # Optional arguments. Usually these would be loaded from a configuration file.
+    # This provides a way to override that.
+    if args.zookeepers:
+        options["zookeeper_quorum"] = args.zookeepers
+    if args.config_znode:
+        options["configuration_znode"] = args.config_znode
+
+    # Choose a mode of operation.
+    if args.list:
+        zk = connect(options, read_only=True)
+        list_configs(zk, options)
+    elif args.set:
+        zk = connect(options)
+        set_config(zk, options, args.set[0], args.set[1])
+    elif args.get:
+        zk = connect(options, read_only=True)
+        get_config(zk, options, args.get)
+    elif args.delete:
+        zk = connect(options)
+        delete_config(zk, options, args.delete)
+    else:
+        print("You must choose a mode of operation: --list, --get, or --set.")
+        print()
+        parser.print_help()
+        sys.exit(1)
+
