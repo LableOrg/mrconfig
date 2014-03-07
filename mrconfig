@@ -65,7 +65,7 @@ def check_config_znode_or_quit(zk, znode):
 
     if zk.exists(znode) is None:
         print("Znode {0} does not exist (yet).".format(znode), file=sys.stderr)
-        sys.exit(2)
+        exit_with_error(zk)
 
 
 def path_from(parent, child):
@@ -89,11 +89,17 @@ def connect(options, read_only=False):
     zk.start()
     if not zk.state == KazooState.CONNECTED:
         print("Connection to ZooKeeper quorum failed, check your settings.", file=sys.stderr)
-        sys.exit(2)
+        exit_with_error(zk)
 
     check_config_znode_or_quit(zk, options["configuration_znode"])
     
     return zk
+
+
+def exit_with_error(zk):
+    """"Close the ZooKeeper connection and exit with a non-zero exit status."""
+    zk.close()
+    sys.exit(2)
 
 
 def set_config(zk, options, name, filename):
@@ -119,9 +125,11 @@ def set_config(zk, options, name, filename):
             zk.create(confnode, content)
     except:
         print("Unexpected error:", sys.exc_info()[0])
-        sys.exit(2)
+        exit_with_error(zk)
     else:
         print("Node {0} successfully written.".format(confnode))
+
+    zk.close()
 
 
 def get_config(zk, options, name):
@@ -133,9 +141,11 @@ def get_config(zk, options, name):
         content = zk.get(confnode)[0]
     except kazoo.exceptions.NoNodeError:
         print("Node does not exist: {0}".format(confnode), file=sys.stderr)
-        sys.exit(2)
+        exit_with_error(zk)
     else:
         print(content)
+
+    zk.close()
 
 
 def delete_config(zk, options, name):
@@ -147,12 +157,14 @@ def delete_config(zk, options, name):
         zk.delete(confnode)
     except kazoo.exceptions.NoNodeError:
         print("Node does not exist: {0}.".format(confnode), file=sys.stderr)
-        sys.exit(2)
+        exit_with_error(zk)
     except:
         print("Node does not exist: {0}.".format(confnode), file=sys.stderr)
-        sys.exit(2)
+        exit_with_error(zk)
     else:
         print("Successfully deleted node {0}.".format(confnode))
+
+    zk.close()
 
 
 def list_configs(zk, options):
@@ -172,6 +184,8 @@ def list_configs(zk, options):
                 print(" {0} {1}".format("├", prev))
             prev = child
         print(" {0} {1}".format("└", prev))
+
+    zk.close()
 
 
 if __name__ == '__main__':
