@@ -1,14 +1,25 @@
 Mr. Config
 ==========
 
-Mr. Config is a simple, command-line, ZooKeeper config management tool. We use
-it as a devops tool to upload configuration files (YAML files in our case, but
-anything goes) to a ZooKeeper quorum.
+Mr. Config is a simple, command-line, Apache [ZooKeeper][] config management tool.
+We use it as a devops tool to upload configuration files (YAML files in our case,
+but anything goes) to a ZooKeeper quorum.
 
 *Our Java WAR applications hosted on a farm of Tomcat servers maintain watches
 on the ZooKeeper `znode` that corresponds with their contextname. Whenever their
 configuration node is updated by Mr. Config, they update their internal
 configation with the new node content.*
+
+It is possible of course to manage ZooKeeper nodes with other tools, such as
+`zkcli`, but we wanted a very simple tool with a few straight forward commands:
+
+* Download a configuration file
+* Upload or overwrite a configuration file
+* List all configuration files
+* Delete a configuration file
+
+All of the heavy lifting is done by the [KaZoo][] library; a Python 
+implementation of the ZooKeeper API.
 
 ## Usage
 
@@ -70,6 +81,17 @@ zookeeper_quorum: zk1,zk2,zk3
 configuration_znode: /myconfigs/
 ``` 
 
+After configuring Mr. Config in this manner, the basic opertions look like this:
+
+```bash
+mrconfig --list
+mrconfig --get NAME
+mrconfig --set NAME FILE
+# or,
+cat FILE | mrconfig --set NAME -
+mrconfig --delete NAME
+```
+
 ## Caveats
 
 This tool was written without any consideration for security. If you have
@@ -80,6 +102,7 @@ prevent anyone with access to the tool from attempting to do so. Caveat emptor.
 
 ZooKeeper does have ways to limit access to only a subset of znodes, but we
 didn't have the need to do add support for this to Mr. Config yet.
+
 
 ## Python dependencies
 
@@ -108,3 +131,6 @@ sudo pip install argparse
 If you've successfully ran Mr. Config on an OS not listed here, please
 let us know what you did, and we'll gladly add the instructions to the list.
 
+
+[kazoo]: https://github.com/python-zk/kazoo "KaZoo"
+[zookeeper]: http://zookeeper.apache.org/ "Apache ZooKeeper"
