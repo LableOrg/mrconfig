@@ -98,6 +98,7 @@ def connect(options, read_only=False):
 
 def exit_with_error(zk):
     """"Close the ZooKeeper connection and exit with a non-zero exit status."""
+    zk.stop()
     zk.close()
     sys.exit(2)
 
@@ -129,6 +130,7 @@ def set_config(zk, options, name, filename):
     else:
         print("Node {0} successfully written.".format(confnode))
 
+    zk.stop()
     zk.close()
 
 
@@ -145,6 +147,7 @@ def get_config(zk, options, name):
     else:
         print(content)
 
+    zk.stop()
     zk.close()
 
 
@@ -164,6 +167,7 @@ def delete_config(zk, options, name):
     else:
         print("Successfully deleted node {0}.".format(confnode))
 
+    zk.stop()
     zk.close()
 
 
@@ -185,6 +189,7 @@ def list_configs(zk, options):
             prev = child
         print(" {0} {1}".format("└", prev))
 
+    zk.stop()
     zk.close()
 
 
