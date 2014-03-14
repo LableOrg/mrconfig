@@ -18,11 +18,12 @@ from os.path import expanduser
 
 
 # Program version.
-VERSION="0.1"
+VERSION="0.2"
 
-# The two possible locations of this program's configuration file.
+# The possible locations of this program's configuration file.
 CONF_IN_HOMEDIR=expanduser("~/.mrconfig")
-CONF_IN_ETC="/etc/mrconfig.conf"
+ETC_DIRS=['/etc', '/usr/local/etc']
+CONF_IN_ETC="mrconfig.conf"
 
 
 def readFromConfig(path, options):
@@ -254,9 +255,13 @@ if __name__ == '__main__':
     if os.path.isfile(CONF_IN_HOMEDIR):
         # User settings, these take precedence over system settings.
         readFromConfig(CONF_IN_HOMEDIR, options)
-    elif os.path.isfile(CONF_IN_ETC):
-        # System settings.
-        readFromConfig(CONF_IN_ETC, options)
+    else:
+        for confdir in ETC_DIRS:
+            conffile = os.path.join(confdir, CONF_IN_ETC)
+            if os.path.isfile(conffile):
+                # System settings.
+                readFromConfig(conffile, options)
+                break
 
     # Optional arguments. Usually these would be loaded from a configuration file.
     # This provides a way to override that.
