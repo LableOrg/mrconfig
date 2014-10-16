@@ -171,6 +171,7 @@ def list_configs():
 
     znode = options["configuration_znode"]
     children = zookeeper.get_children(znode)
+    children.sort()
 
     print(znode)
     if len(children) == 0:
