@@ -37,3 +37,6 @@ nosetests.xml
 
 # Editor swap files.
 *.swp
+
+# PyCharm IDE
+.idea
