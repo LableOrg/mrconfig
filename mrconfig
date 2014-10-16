@@ -18,7 +18,7 @@ from os.path import expanduser
 
 
 # Program version.
-VERSION = "0.2"
+VERSION = "0.3"
 
 # The possible locations of this program's configuration file.
 CONF_IN_HOME_DIR = expanduser('~/.mrconfig')
