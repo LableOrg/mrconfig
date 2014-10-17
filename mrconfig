@@ -6,15 +6,18 @@ from __future__ import print_function
 import argparse
 import sys
 import os
+import tempfile
 import StringIO
 import ConfigParser
 import textwrap
 import logging
+from subprocess import call
+from os.path import expanduser
 
 from kazoo.client import KazooClient
 from kazoo.client import KazooState
 from kazoo.exceptions import NoNodeError
-from os.path import expanduser
+
 
 
 # Program version.
@@ -24,6 +27,8 @@ VERSION = "0.3"
 CONF_IN_HOME_DIR = expanduser('~/.mrconfig')
 ETC_DIRS = ['/etc', '/usr/local/etc']
 CONF_IN_ETC = 'mrconfig.conf'
+
+EDITOR = os.environ.get('EDITOR', 'vim')
 
 
 def read_from_config(path):
@@ -93,25 +98,35 @@ def connect(read_only=False):
     check_config_znode_or_quit(options["configuration_znode"])
 
 
+def close_connection():
+    """Close the ZooKeeper connection."""
+    if zookeeper is not None:
+        zookeeper.stop()
+        zookeeper.close()
+
+
 def exit_with_error():
     """"Close the ZooKeeper connection and exit with a non-zero exit status."""
-    zookeeper.stop()
-    zookeeper.close()
+    close_connection()
     sys.exit(2)
 
 
-def set_config(name, filename):
-    """Upload the contents for the named configuration node."""
-
-    znode = options["configuration_znode"]
-    conf_node = path_from(znode, name)
-
+def read_from_file_or_stdin(filename):
+    """Read the contents of named file, or from stdin if filename is '-'."""
     if filename == '-':
         # Read from stdin when - is passed as filename.
         content = sys.stdin.read()
     else:
         with open(filename, "r") as f:
             content = f.read()
+    return content
+
+
+def set_config(name, content):
+    """Upload the contents for the named configuration node."""
+
+    znode = options["configuration_znode"]
+    conf_node = path_from(znode, name)
 
     conf_node_exists = (zookeeper.exists(conf_node) is not None)
 
@@ -123,16 +138,14 @@ def set_config(name, filename):
             zookeeper.ensure_path(znode)
             zookeeper.create(conf_node, content)
     except:
+        # Catch all exceptions here.
         print("Unexpected error:", sys.exc_info()[0])
         exit_with_error()
     else:
         print("Node {0} successfully written.".format(conf_node))
 
-    zookeeper.stop()
-    zookeeper.close()
 
-
-def get_config(name):
+def get_config(name, raise_if_no_such_node=False):
     """Download the contents of a node."""
 
     znode = options["configuration_znode"]
@@ -140,13 +153,12 @@ def get_config(name):
     try:
         content = zookeeper.get(conf_node)[0]
     except NoNodeError:
+        if raise_if_no_such_node:
+            raise
         print("Node does not exist: {0}".format(conf_node), file=sys.stderr)
         exit_with_error()
     else:
-        print(content)
-
-    zookeeper.stop()
-    zookeeper.close()
+        return content
 
 
 def delete_config(name):
@@ -161,9 +173,6 @@ def delete_config(name):
         exit_with_error()
     else:
         print("Successfully deleted node {0}.".format(conf_node))
-
-    zookeeper.stop()
-    zookeeper.close()
 
 
 def list_configs():
@@ -185,8 +194,38 @@ def list_configs():
             prev = child
         print(" {0} {1}".format("└", prev))
 
-    zookeeper.stop()
-    zookeeper.close()
+
+def edit_config_with_favorite_editor(content):
+    """Edit text in $EDITOR, or vim if no editor is configured."""
+
+    with tempfile.NamedTemporaryFile(suffix=".tmp", delete=False) as temp_file:
+        temp_file.write(content)
+        temp_file.flush()
+        call([EDITOR, temp_file.name])
+        temp_file_name = temp_file.name
+
+    with open(temp_file_name, "r") as temp_file:
+        new_content = temp_file.read()
+
+    os.remove(temp_file_name)
+
+    return new_content
+
+
+def user_confirms_action(query, name):
+    """Ask the user if he really intended to perform the requested action, and return True if he did."""
+    query += " (y/n): "
+    print(query.format(name), end="")
+    while True:
+        try:
+            choice = raw_input().lower()
+            if choice == "y":
+                return True
+            elif choice == "n":
+                return False
+        except KeyboardInterrupt:
+            # Clean exit on Ctrl+C.
+            exit_with_error()
 
 
 if __name__ == '__main__':
@@ -224,6 +263,8 @@ if __name__ == '__main__':
                             help="Upload a configuration file and place it under this name.")
     mode_group.add_argument("--get", metavar="NAME",
                             help="Download named config and output it to stdout.")
+    mode_group.add_argument("--edit", metavar="NAME",
+                            help="Edit named config in an editor.")
     mode_group.add_argument("--delete", metavar="NAME",
                             help="Delete named config. This action cannot be undone!")
 
@@ -265,21 +306,48 @@ if __name__ == '__main__':
     if args.config_znode:
         options["configuration_znode"] = args.config_znode
 
+    zookeeper = None
     # Choose a mode of operation.
     if args.list:
+        # List all configuration nodes.
         connect(read_only=True)
         list_configs()
+        close_connection()
     elif args.set:
+        # Set configuration.
         connect()
-        set_config(args.set[0], args.set[1])
+        new_config = read_from_file_or_stdin(args.set[1])
+        set_config(args.set[0], new_config)
+        close_connection()
     elif args.get:
+        # Get configuration and output to stdout.
         connect(read_only=True)
-        get_config(args.get)
+        print(get_config(args.get))
+        close_connection()
+    elif args.edit:
+        connect()
+        old_config = ""
+        try:
+            # Read the existing configuration node, if it exists.
+            old_config = get_config(args.edit, raise_if_no_such_node=True)
+        except NoNodeError:
+            # Node does not exist yet. Ask the user if he wanted to create one.
+            if not user_confirms_action("Configuration node '{0}' does not exist, do you want to create it?",
+                                        args.edit):
+                exit_with_error()
+        new_config = edit_config_with_favorite_editor(old_config)
+        set_config(args.edit, new_config)
+        close_connection()
     elif args.delete:
+        # Remove a configuration node.
+        if not user_confirms_action("Are you sure you want to delete configuration node '{0}'?",
+                                    args.delete):
+            exit_with_error()
         connect()
         delete_config(args.delete)
+        close_connection()
     else:
-        print("Please choose the operation you want to perform: --list, --get, or --set.")
+        print("Please choose the operation you want to perform: --list, --get, --set, or --edit.")
         print()
         parser.print_help()
         sys.exit(1)
