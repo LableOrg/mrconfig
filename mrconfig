@@ -18,10 +18,8 @@ from kazoo.client import KazooClient
 from kazoo.client import KazooState
 from kazoo.exceptions import NoNodeError
 
-
-
 # Program version.
-VERSION = "0.3"
+VERSION = "0.4"
 
 # The possible locations of this program's configuration file.
 CONF_IN_HOME_DIR = expanduser('~/.mrconfig')
@@ -29,6 +27,7 @@ ETC_DIRS = ['/etc', '/usr/local/etc']
 CONF_IN_ETC = 'mrconfig.conf'
 
 EDITOR = os.environ.get('EDITOR', 'vim')
+DEFAULT_TEMP_FILE_EXTENSION = '.txt'
 
 
 def read_from_config(path):
@@ -44,9 +43,12 @@ def read_from_config(path):
         logging.warn("Failed to read config file at {0}.".format(path))
         return
 
-    for option in ("zookeeper_quorum", "configuration_znode"):
-        options[option] = config.get('root', option)
-        logging.info("Read option `{0}' from {1}: {2}".format(option, path, options[option]))
+    for option in ("zookeeper_quorum", "configuration_znode", "default_file_extension"):
+        try:
+            options[option] = config.get('root', option)
+            logging.info("Read option `{0}' from {1}: {2}".format(option, path, options[option]))
+        except ConfigParser.NoOptionError:
+            logging.info("Option `{0}' not configured in settings file.".format(option))
 
 
 def check_options_or_exit():
@@ -195,10 +197,24 @@ def list_configs():
         print(" {0} {1}".format("└", prev))
 
 
-def edit_config_with_favorite_editor(content):
+def edit_config_with_favorite_editor(name, content):
     """Edit text in $EDITOR, or vim if no editor is configured."""
 
-    with tempfile.NamedTemporaryFile(suffix=".tmp", delete=False) as temp_file:
+    file_extension = os.path.splitext(name)[1]
+    if file_extension == "":
+        if "default_file_extension" in options:
+            suffix = options["default_file_extension"]
+        else:
+            suffix = DEFAULT_TEMP_FILE_EXTENSION
+    else:
+        suffix = file_extension
+
+    # Ensure a period is placed before the file extension.
+    if suffix[0] != '.':
+        suffix = '.' + suffix
+
+    with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as temp_file:
+        logging.info("Writing content to temporary file at: {0}".format(temp_file.name))
         temp_file.write(content)
         temp_file.flush()
         call([EDITOR, temp_file.name])
@@ -335,7 +351,7 @@ if __name__ == '__main__':
             if not user_confirms_action("Configuration node '{0}' does not exist, do you want to create it?",
                                         args.edit):
                 exit_with_error()
-        new_config = edit_config_with_favorite_editor(old_config)
+        new_config = edit_config_with_favorite_editor(args.edit, old_config)
         set_config(args.edit, new_config)
         close_connection()
     elif args.delete:
