@@ -19,7 +19,7 @@ from kazoo.client import KazooState
 from kazoo.exceptions import NoNodeError
 
 # Program version.
-VERSION = "0.4"
+VERSION = "0.5"
 
 # The possible locations of this program's configuration file.
 CONF_IN_HOME_DIR = expanduser('~/.mrconfig')
@@ -51,25 +51,27 @@ def read_from_config(path):
             logging.info("Option `{0}' not configured in settings file.".format(option))
 
 
-def check_options_or_exit():
+def check_options_or_exit(quiet):
     """Check if the required options were set, and quit if that is not the case."""
 
     if not "zookeeper_quorum" in options or not "configuration_znode" in options:
-        message = ("Look, I can't connect to the ZooKeeper quorum without its address and the path "
-                   "to the configuration root znode. "
-                   "Either add a configuration file in ~/.mrconfig or /etc/mrconfig.conf, "
-                   "or pass these parameters as arguments.")
-        print("Hello there!")
-        print("")
-        print(textwrap.fill(message, 80))
+        if not quiet:
+            message = ("Look, I can't connect to the ZooKeeper quorum without its address and the path "
+                       "to the configuration root znode. "
+                       "Either add a configuration file in ~/.mrconfig or /etc/mrconfig.conf, "
+                       "or pass these parameters as arguments.")
+            print("Hello there!")
+            print("")
+            print(textwrap.fill(message, 80))
         sys.exit(2)
 
 
-def check_config_znode_or_quit(znode):
+def check_config_znode_or_quit(znode, quiet):
     """Check if a node exists, and quit if it doesn't."""
 
     if zookeeper.exists(znode) is None:
-        print("Znode {0} does not exist (yet).".format(znode), file=sys.stderr)
+        if not quiet:
+            print("Znode {0} does not exist (yet).".format(znode), file=sys.stderr)
         exit_with_error()
 
 
@@ -82,10 +84,10 @@ def path_from(parent, child):
         return parent + "/" + child
 
 
-def connect(read_only=False):
+def connect(quiet, read_only=False):
     """Connect to the ZooKeeper quorum, and assert that the root configuration node exists."""
 
-    check_options_or_exit()
+    check_options_or_exit(quiet)
 
     logging.info("Connecting to ZooKeeper quorum at {0}. Znode is {1}.".format(
         options["zookeeper_quorum"], options["configuration_znode"]))
@@ -94,10 +96,11 @@ def connect(read_only=False):
     zookeeper = KazooClient(hosts=options["zookeeper_quorum"], read_only=read_only)
     zookeeper.start()
     if not zookeeper.state == KazooState.CONNECTED:
-        print("Connection to ZooKeeper quorum failed, check your settings.", file=sys.stderr)
+        if not quiet:
+            print("Connection to ZooKeeper quorum failed, check your settings.", file=sys.stderr)
         exit_with_error()
 
-    check_config_znode_or_quit(options["configuration_znode"])
+    check_config_znode_or_quit(options["configuration_znode"], quiet)
 
 
 def close_connection():
@@ -124,7 +127,7 @@ def read_from_file_or_stdin(filename):
     return content
 
 
-def set_config(name, content):
+def set_config(name, content, quiet):
     """Upload the contents for the named configuration node."""
 
     znode = options["configuration_znode"]
@@ -141,13 +144,15 @@ def set_config(name, content):
             zookeeper.create(conf_node, content)
     except:
         # Catch all exceptions here.
-        print("Unexpected error:", sys.exc_info()[0])
+        if not quiet:
+            print("Unexpected error:", sys.exc_info()[0])
         exit_with_error()
     else:
-        print("Node {0} successfully written.".format(conf_node))
+        if not quiet:
+            print("Node {0} successfully written.".format(conf_node))
 
 
-def get_config(name, raise_if_no_such_node=False):
+def get_config(name, quiet, raise_if_no_such_node=False):
     """Download the contents of a node."""
 
     znode = options["configuration_znode"]
@@ -157,13 +162,14 @@ def get_config(name, raise_if_no_such_node=False):
     except NoNodeError:
         if raise_if_no_such_node:
             raise
-        print("Node does not exist: {0}".format(conf_node), file=sys.stderr)
+        if not quiet:
+            print("Node does not exist: {0}".format(conf_node), file=sys.stderr)
         exit_with_error()
     else:
         return content
 
 
-def delete_config(name):
+def delete_config(name, quiet):
     """Delete a node, if it exists."""
 
     znode = options["configuration_znode"]
@@ -171,10 +177,14 @@ def delete_config(name):
     try:
         zookeeper.delete(conf_node)
     except NoNodeError:
-        print("Node does not exist: {0}.".format(conf_node), file=sys.stderr)
-        exit_with_error()
+        # Node is already gone, but we treat this as success because deleting
+        # the node was the goal.
+        if not quiet:
+            print("Node does not exist: {0}.".format(conf_node))
+        sys.exit(0)
     else:
-        print("Successfully deleted node {0}.".format(conf_node))
+        if not quiet:
+            print("Successfully deleted node {0}.".format(conf_node))
 
 
 def list_configs():
@@ -269,6 +279,8 @@ if __name__ == '__main__':
     parser.add_argument("-v", "--verbose", default=0,
                         help="Be a bit more chatty about what we're doing.",
                         action="count")
+    parser.add_argument("-q", "--quiet", action="store_true",
+                        help="Suppress all output (overrides verbosity).")
 
     # The main modes of operation. These are mutually exclusive; only one task can be performed
     # at a time.
@@ -283,6 +295,8 @@ if __name__ == '__main__':
                             help="Edit named config in an editor.")
     mode_group.add_argument("--delete", metavar="NAME",
                             help="Delete named config. This action cannot be undone!")
+    mode_group.add_argument("--delete-without-confirmation", metavar="NAME",
+                            help="Delete named config without asking for confirmation. This action cannot be undone!")
 
     # ZooKeeper settings. These override any settings found in the mrconfig settings file.
     parser.add_argument("--zookeepers", help="Comma-separated address of the ZooKeeper quorum.")
@@ -295,6 +309,11 @@ if __name__ == '__main__':
 
     args = parser.parse_args()
     verbosity = args.verbose
+    quiet = False
+
+    if args.quiet:
+        verbosity = -1
+        quiet = True
 
     # Have the logging used match the verbosity desired by the user.
     if verbosity == 1:
@@ -326,44 +345,50 @@ if __name__ == '__main__':
     # Choose a mode of operation.
     if args.list:
         # List all configuration nodes.
-        connect(read_only=True)
+        connect(quiet, read_only=True)
         list_configs()
         close_connection()
     elif args.set:
         # Set configuration.
-        connect()
+        connect(quiet)
         new_config = read_from_file_or_stdin(args.set[1])
-        set_config(args.set[0], new_config)
+        set_config(args.set[0], new_config, quiet)
         close_connection()
     elif args.get:
         # Get configuration and output to stdout.
-        connect(read_only=True)
-        print(get_config(args.get))
+        connect(quiet, read_only=True)
+        print(get_config(args.get, quiet))
         close_connection()
     elif args.edit:
-        connect()
+        connect(quiet)
         old_config = ""
         try:
             # Read the existing configuration node, if it exists.
-            old_config = get_config(args.edit, raise_if_no_such_node=True)
+            old_config = get_config(args.edit, quiet, raise_if_no_such_node=True)
         except NoNodeError:
             # Node does not exist yet. Ask the user if he wanted to create one.
             if not user_confirms_action("Configuration node '{0}' does not exist, do you want to create it?",
                                         args.edit):
                 exit_with_error()
         new_config = edit_config_with_favorite_editor(args.edit, old_config)
-        set_config(args.edit, new_config)
+        set_config(args.edit, new_config, quiet)
         close_connection()
     elif args.delete:
-        # Remove a configuration node.
+        # Remove a configuration node, but only if the user confirms this action.
         if not user_confirms_action("Are you sure you want to delete configuration node '{0}'?",
                                     args.delete):
             exit_with_error()
-        connect()
-        delete_config(args.delete)
+        connect(quiet)
+        delete_config(args.delete, quiet)
+        close_connection()
+    elif args.delete_without_confirmation:
+        # Remove a configuration node.
+        connect(quiet)
+        delete_config(args.delete_without_confirmation, quiet)
         close_connection()
     else:
-        print("Please choose the operation you want to perform: --list, --get, --set, or --edit.")
-        print()
-        parser.print_help()
+        if not quiet:
+            print("Please choose the operation you want to perform: --list, --get, --set, or --edit.")
+            print()
+            parser.print_help()
         sys.exit(1)
