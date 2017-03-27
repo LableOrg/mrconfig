@@ -166,7 +166,7 @@ def get_config(name, quiet, raise_if_no_such_node=False):
             print("Node does not exist: {0}".format(conf_node), file=sys.stderr)
         exit_with_error()
     else:
-        return content
+        return content.rstrip()
 
 
 def delete_config(name, quiet):
