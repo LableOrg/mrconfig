@@ -191,20 +191,33 @@ def list_configs():
     """Print a list of all the configuration nodes directly under the parent node."""
 
     znode = options["configuration_znode"]
+    print(znode)
+    list_dir(znode, 0)
+
+
+def list_dir(znode, depth):
+    """Print all descendants of a single znode as a tree via recursion."""
+    indent = ""
+    for i in range(0, depth):
+        indent += " │"
+
     children = zookeeper.get_children(znode)
+    if len(children) == 0:
+        if depth == 0:
+            print("  (no child nodes)")
+        return
+
     children.sort()
 
-    print(znode)
-    if len(children) == 0:
-        print("  (no child nodes)")
-    else:
-        # Print the children with a character-art path in front of it.
-        prev = None
-        for child in children:
-            if prev is not None:
-                print(" {0} {1}".format("├", prev))
-            prev = child
-        print(" {0} {1}".format("└", prev))
+    # Print the children with a character-art path in front of it.
+    prev = None
+    for child in children:
+        if prev is not None:
+            print("{0} {1} {2}".format(indent, "├", prev))
+            list_dir(znode + '/' + prev, depth + 1)
+        prev = child
+    print("{0} {1} {2}".format(indent, "└", prev))
+    list_dir(znode + '/' + prev, depth + 1)
 
 
 def edit_config_with_favorite_editor(name, content):
