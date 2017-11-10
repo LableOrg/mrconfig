@@ -16,10 +16,10 @@ from os.path import expanduser
 
 from kazoo.client import KazooClient
 from kazoo.client import KazooState
-from kazoo.exceptions import NoNodeError
+from kazoo.exceptions import NoNodeError, NotEmptyError
 
 # Program version.
-VERSION = "0.5"
+VERSION = "0.6"
 
 # The possible locations of this program's configuration file.
 CONF_IN_HOME_DIR = expanduser('~/.mrconfig')
@@ -28,6 +28,11 @@ CONF_IN_ETC = 'mrconfig.conf'
 
 EDITOR = os.environ.get('EDITOR', 'vim')
 DEFAULT_TEMP_FILE_EXTENSION = '.txt'
+
+options = {
+    'configuration_znode': '/'        
+}
+zookeeper = None
 
 
 def read_from_config(path):
@@ -51,12 +56,13 @@ def read_from_config(path):
             logging.info("Option `{0}' not configured in settings file.".format(option))
 
 
-def check_options_or_exit(quiet):
+def assert_options_or_exit(quiet):
     """Check if the required options were set, and quit if that is not the case."""
 
-    if not "zookeeper_quorum" in options or not "configuration_znode" in options:
+    if not "zookeeper_quorum" in options:
         if not quiet:
-            message = ("Look, I can't connect to the ZooKeeper quorum without its address and the path "
+            message = ("I can't connect to the ZooKeeper quorum without its address and (if "
+                       "not specified as part of the connect string) the path "
                        "to the configuration root znode. "
                        "Either add a configuration file in ~/.mrconfig or /etc/mrconfig.conf, "
                        "or pass these parameters as arguments.")
@@ -66,7 +72,7 @@ def check_options_or_exit(quiet):
         sys.exit(2)
 
 
-def check_config_znode_or_quit(znode, quiet):
+def assert_config_znode_or_quit(znode, quiet=False):
     """Check if a node exists, and quit if it doesn't."""
 
     if zookeeper.exists(znode) is None:
@@ -75,19 +81,66 @@ def check_config_znode_or_quit(znode, quiet):
         exit_with_error()
 
 
-def path_from(parent, child):
-    """Join the name of parent node with a child name into a complete valid path."""
+def assert_config_parent_node_exists_or_quit(quiet=False):
+    """Assert that the node that holds all configuration files exists."""
 
-    if parent[-1:] == "/":
-        return parent + child
+    znode = options["configuration_znode"]
+    assert_config_znode_or_quit(znode, quiet)
+
+
+def assert_node_is_not_a_virtual_dir_or_quit(conf_node, quiet=False):
+    """Assert that a (proposed) node does not clash with existing nodes.
+    
+    I.e., check that the new node name does not occur as part of an existing 
+    node name's virtual path. For example, if there is a node 'foo--bar.yaml'
+    (virtual path 'foo/bar.yaml') then a node named 'foo' is forbidden, because
+    it already 'exists' as part of another node's virtual path.
+    """
+
+    znode = options["configuration_znode"]
+    children = zookeeper.get_children(znode)
+    for child in children:
+        ref = znode + '/' + child
+        if ref.startswith(conf_node + '--'):
+            print('Node {0} is a (virtual) directory and cannot be overwritten.'.format(conf_node))
+            exit_with_error()
+
+
+def full_znode_path(znode):
+    parts = options['zookeeper_quorum'].split('/', 1)
+    if znode.startswith('/'):
+        znode = znode[1:]
+    if len(parts) == 1:
+        return '/' + znode
     else:
-        return parent + "/" + child
+        chroot = parts[1]
+        if not chroot.endswith('/'):
+            chroot = chroot + '/'
+        if not chroot.startswith('/'):
+            chroot = '/' + chroot
+        return chroot + znode
+
+
+def convert_name_to_znode_name(config_name):
+    """Convert a virtual path (e.g., 'includes/defaults.yaml') to the zookeeper
+    node name (if the configuration node is 'configs', this would be 
+    'configs/includes--defaults.yaml').    
+    """
+
+    if config_name.startswith('/'):
+        config_name = config_name[1:]
+
+    znode = options["configuration_znode"]
+    if not znode.endswith('/'):
+        znode = znode + '/'
+
+    return znode + config_name.replace('/', '--')
 
 
 def connect(quiet, read_only=False):
     """Connect to the ZooKeeper quorum, and assert that the root configuration node exists."""
 
-    check_options_or_exit(quiet)
+    assert_options_or_exit(quiet)
 
     logging.info("Connecting to ZooKeeper quorum at {0}. Znode is {1}.".format(
         options["zookeeper_quorum"], options["configuration_znode"]))
@@ -100,7 +153,7 @@ def connect(quiet, read_only=False):
             print("Connection to ZooKeeper quorum failed, check your settings.", file=sys.stderr)
         exit_with_error()
 
-    check_config_znode_or_quit(options["configuration_znode"], quiet)
+    assert_config_znode_or_quit(options["configuration_znode"], quiet)
 
 
 def close_connection():
@@ -130,8 +183,9 @@ def read_from_file_or_stdin(filename):
 def set_config(name, content, quiet):
     """Upload the contents for the named configuration node."""
 
-    znode = options["configuration_znode"]
-    conf_node = path_from(znode, name)
+    conf_node = convert_name_to_znode_name(name)
+    assert_config_parent_node_exists_or_quit(quiet)
+    assert_node_is_not_a_virtual_dir_or_quit(conf_node, quiet)
 
     conf_node_exists = (zookeeper.exists(conf_node) is not None)
 
@@ -140,7 +194,6 @@ def set_config(name, content, quiet):
         if conf_node_exists:
             zookeeper.set(conf_node, content)
         else:
-            zookeeper.ensure_path(znode)
             zookeeper.create(conf_node, content)
     except:
         # Catch all exceptions here.
@@ -149,75 +202,128 @@ def set_config(name, content, quiet):
         exit_with_error()
     else:
         if not quiet:
-            print("Node {0} successfully written.".format(conf_node))
+            print("Node {0} (name: {1}) successfully written.".format(conf_node, name))
+
+
+def node_has_children(name):
+    """Return true if a node has children."""
+
+    conf_node = convert_name_to_znode_name(name)
+    try:
+        children = zookeeper.get_children(conf_node)
+    except NoNodeError:
+        return False
+
+    return len(children) != 0
 
 
 def get_config(name, quiet, raise_if_no_such_node=False):
     """Download the contents of a node."""
 
-    znode = options["configuration_znode"]
-    conf_node = path_from(znode, name)
+    conf_node = convert_name_to_znode_name(name)
     try:
         content = zookeeper.get(conf_node)[0]
     except NoNodeError:
         if raise_if_no_such_node:
             raise
         if not quiet:
-            print("Node does not exist: {0}".format(conf_node), file=sys.stderr)
+            print("Node does not exist: {0} (name: {1})".format(conf_node, name), file=sys.stderr)
         exit_with_error()
     else:
         return content.rstrip()
 
 
-def delete_config(name, quiet):
+def delete_node(name, quiet):
     """Delete a node, if it exists."""
 
-    znode = options["configuration_znode"]
-    conf_node = path_from(znode, name)
+    target_node = convert_name_to_znode_name(name)
+
     try:
-        zookeeper.delete(conf_node)
+        zookeeper.delete(target_node)
     except NoNodeError:
         # Node is already gone, but we treat this as success because deleting
         # the node was the goal.
         if not quiet:
-            print("Node does not exist: {0}.".format(conf_node))
-        sys.exit(0)
+            print("Node does not exist: {0} (name: {1}).".format(target_node, name))
+    except NotEmptyError:
+        # Node contains child nodes.
+        if not quiet:
+            print("Node is not empty (remove its children via zkcli first).")
+            print(target_node)
+        return False
     else:
         if not quiet:
-            print("Successfully deleted node {0}.".format(conf_node))
+            print("Successfully deleted node {0} (name: {1}).".format(target_node, name))
+
+    return True
+
+
+def color(text, fg=2, bg=None, bold=False, underline=False, italic=False):
+    codes = []
+    if fg is not None:
+        codes.append(str(30 + fg))
+    if bg is not None:
+        codes.append(str(40 + fg))
+    if bold:
+        codes.append('1')
+    if italic:
+        codes.append('3')
+    if underline:
+        codes.append('4')
+
+    return "\x1b[{0}m{1}\x1b[0m".format(';'.join(codes), text)
 
 
 def list_configs():
     """Print a list of all the configuration nodes directly under the parent node."""
 
     znode = options["configuration_znode"]
-    print(znode)
-    list_dir(znode, 0)
-
-
-def list_dir(znode, depth):
-    """Print all descendants of a single znode as a tree via recursion."""
-    indent = ""
-    for i in range(0, depth):
-        indent += " │"
+    print(color('Configuration files ({0})'.format(full_znode_path(znode)), fg=None, bold=True))
 
     children = zookeeper.get_children(znode)
     if len(children) == 0:
-        if depth == 0:
-            print("  (no child nodes)")
+        print("  (no child nodes)")
         return
 
     children.sort()
+    tree_map = {}
+
+    for child in children:
+        path_parts = child.split('--')
+        parent = ''
+        for part in path_parts:
+            if parent not in tree_map:
+                tree_map[parent] = []
+            if part not in tree_map[parent]:
+                tree_map[parent].append(part)
+            parent = parent + '/' + part
+
+    list_dir(tree_map, '', '')
+
+
+def list_dir(tree_map, znode, indent):
+    """Print all descendants of a single znode as a tree via recursion."""
+
+    children = tree_map[znode]
 
     # Print the children with a character-art path in front of it.
     prev = None
     for child in children:
         if prev is not None:
-            print("{0} {1} {2}".format(indent, "├", prev))
-            list_dir(znode + '/' + prev, depth + 1)
+            title = prev
+            if znode + '/' + prev in tree_map:
+                title = color(prev, fg=7, underline=True, italic=True)
+            print("{0} {1} {2}".format(indent, color("├", 3), title))
+            if znode + '/' + prev in tree_map:
+                list_dir(tree_map, znode + '/' + prev, indent + color(' │ ', 3))
         prev = child
-    print("{0} {1} {2}".format(indent, "└", prev))
-    list_dir(znode + '/' + prev, depth + 1)
+
+    title = prev
+    if znode + '/' + prev in tree_map:
+        title = color(prev, fg=7, underline=True, italic=True)
+    print("{0} {1} {2}".format(indent, color("└", 3), title))
+    if znode + '/' + prev in tree_map:
+        list_dir(tree_map, znode + '/' + prev, indent + '   ')
 
 
 def edit_config_with_favorite_editor(name, content):
@@ -267,10 +373,8 @@ def user_confirms_action(query, name):
             exit_with_error()
 
 
-if __name__ == '__main__':
+def main():
     """Gather arguments and prepare logging."""
-
-    options = {}
 
     # Configure argparse with all the options for this program.
     parser = argparse.ArgumentParser(add_help=False,
@@ -306,6 +410,10 @@ if __name__ == '__main__':
                             help="Download named config and output it to stdout.")
     mode_group.add_argument("--edit", metavar="NAME",
                             help="Edit named config in an editor.")
+    mode_group.add_argument("--move", nargs=2, metavar=("SOURCE", "TARGET"),
+                            help="Move a config to a new location.")
+    mode_group.add_argument("--copy", nargs=2, metavar=("SOURCE", "TARGET"),
+                            help="Copy an existing config to another location.")
     mode_group.add_argument("--delete", metavar="NAME",
                             help="Delete named config. This action cannot be undone!")
     mode_group.add_argument("--delete-without-confirmation", metavar="NAME",
@@ -354,7 +462,6 @@ if __name__ == '__main__':
     if args.config_znode:
         options["configuration_znode"] = args.config_znode
 
-    zookeeper = None
     # Choose a mode of operation.
     if args.list:
         # List all configuration nodes.
@@ -379,12 +486,32 @@ if __name__ == '__main__':
             # Read the existing configuration node, if it exists.
             old_config = get_config(args.edit, quiet, raise_if_no_such_node=True)
         except NoNodeError:
-            # Node does not exist yet. Ask the user if he wanted to create one.
+            # Node does not exist yet. Ask user if they want to create one.
             if not user_confirms_action("Configuration node '{0}' does not exist, do you want to create it?",
                                         args.edit):
                 exit_with_error()
         new_config = edit_config_with_favorite_editor(args.edit, old_config)
         set_config(args.edit, new_config, quiet)
+        close_connection()
+    elif args.move:
+        connect(quiet)
+        if node_has_children(args.move[0]):
+            print("Node '{0}' has children. Move or delete these first.".format(args.move[0]))
+            sys.exit(1)
+        content = get_config(args.move[0], quiet)
+        target = args.move[1]
+        if target.endswith('/'):
+            target = target + args.move[0].split('/')[-1]
+        set_config(target, content, quiet)
+        delete_node(args.move[0], quiet=True)
+        close_connection()
+    elif args.copy:
+        connect(quiet)
+        content = get_config(args.copy[0], quiet)
+        target = args.copy[1]
+        if target.endswith('/'):
+            target = target + args.copy[0].split('/')[-1]
+        set_config(target, content, quiet)
         close_connection()
     elif args.delete:
         # Remove a configuration node, but only if the user confirms this action.
@@ -392,12 +519,14 @@ if __name__ == '__main__':
                                     args.delete):
             exit_with_error()
         connect(quiet)
-        delete_config(args.delete, quiet)
+        if not delete_node(args.delete, quiet):
+            sys.exit(1)
         close_connection()
     elif args.delete_without_confirmation:
         # Remove a configuration node.
         connect(quiet)
-        delete_config(args.delete_without_confirmation, quiet)
+        if not delete_node(args.delete_without_confirmation, quiet):
+            sys.exit(1)
         close_connection()
     else:
         if not quiet:
@@ -405,3 +534,7 @@ if __name__ == '__main__':
             print()
             parser.print_help()
         sys.exit(1)
+
+
+if __name__ == '__main__':
+    main()
