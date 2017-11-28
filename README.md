@@ -68,13 +68,13 @@ Configuration files (/myconfigs/):
  └ customer_y
 ```
 
-Mr. Config will not create znode the node used to store the configuration files
+Mr. Config will not create the parent node used to store the configuration files
 for you (`/myconfigs/` in this example). You will have to create it yourself
-using a tool such as `zkcli`.
+using a ZooKeeper tool such as `zkcli`.
 
 Uploading and downloading the contents of a configuration node is as simple as
 calling `mrconfig` with `--get MyConfig` or `--set MyConfig
-localconfigfile.yml`.
+localconfigfile.yaml`.
 
 ### Settings
 
@@ -100,9 +100,11 @@ After configuring Mr. Config in this manner, the basic operations look like this
 ```bash
 mrconfig --list
 mrconfig --get NAME
+
 mrconfig --set NAME FILE
 # or,
 cat FILE | mrconfig --set NAME -
+
 mrconfig --delete NAME
 mrconfig --move NAME_SRC NAME_TARGET
 mrconfig --copy NAME_SRC NAME_TARGET
@@ -114,7 +116,7 @@ In order to manage a growing set of configuration files, it makes sense to
 structure these using a directory/file-like hierarchy. Mr. Config supports this
 in a special way: files can be stored in a hierarchy of 'directories':
 
-```
+```bash
 mrconfig --set base.yaml base.yaml
 mrconfig --set includes/defaults.yaml defaults.yaml
 mrconfig -l
@@ -126,14 +128,15 @@ mrconfig -l
 ```
 
 On the ZooKeeper quorum these *are not* stored as a hierarchy of ZooKeeper
-nodes, but are all kept as nodes under the configuration parent node configured.
-The reason for this is twofold:
+nodes, but are all kept as nodes directly under the configuration parent node
+configured. The reason for this is twofold:
 
 * Keeping all configuration nodes as children of a single node allows for
   configuration libraries to set a single watch on the parent node to track new
   and deleted nodes
 * ZooKeeper has no notion of directory-only nodes; a node with children can
-  still contain its own content, leading to unintuitive situations
+  still contain its own content, leading to unintuitive situations (i.e. a 
+  'directory' can contain data itself)
 
 To store all configuration files under a single node, their virtual path is
 converted to a single node name using `--` as a separator. So
