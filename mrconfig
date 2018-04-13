@@ -187,12 +187,14 @@ def set_config(name, content, quiet):
 
     conf_node_exists = (zookeeper.exists(conf_node) is not None)
 
+    data = content.encode('utf-8')
+
     # noinspection PyBroadException
     try:
         if conf_node_exists:
-            zookeeper.set(conf_node, content)
+            zookeeper.set(conf_node, data)
         else:
-            zookeeper.create(conf_node, content)
+            zookeeper.create(conf_node, data)
     except:
         # Catch all exceptions here.
         if not quiet:
@@ -220,7 +222,7 @@ def get_config(name, quiet, raise_if_no_such_node=False):
 
     conf_node = convert_name_to_znode_name(name)
     try:
-        content = zookeeper.get(conf_node)[0]
+        data, stat = zookeeper.get(conf_node)
     except NoNodeError:
         if raise_if_no_such_node:
             raise
@@ -228,7 +230,7 @@ def get_config(name, quiet, raise_if_no_such_node=False):
             print("Node does not exist: {0} (name: {1})".format(conf_node, name), file=sys.stderr)
         exit_with_error()
     else:
-        return content.rstrip()
+        return data.decode("utf-8").rstrip()
 
 
 def delete_node(name, quiet):
