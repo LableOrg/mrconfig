@@ -11,6 +11,7 @@ import textwrap
 import logging
 from subprocess import call
 from os.path import expanduser
+from pathlib import Path
 
 from kazoo.client import KazooClient
 from kazoo.client import KazooState
@@ -301,6 +302,31 @@ def list_configs():
     list_dir(tree_map, '', '')
 
 
+def dump_configs(dest_dir_name):
+    """Dump all configuration nodes to file."""
+
+    znode = options["configuration_znode"]
+    children = zookeeper.get_children(znode)
+
+    dest_dir = Path(dest_dir_name)
+    if not dest_dir.exists():
+        dest_dir.mkdir(parents=True)
+    elif not dest_dir.is_dir():
+        print("A file named {0} already exists.".format(dest_dir_name), file=sys.stderr)
+        exit_with_error()
+
+    for child in children:
+        try:
+            data, stat = zookeeper.get(child)
+        except NoNodeError:
+            # Probably just removed during the time we listed the files and got this one.
+            pass
+        else:
+            dest_file = dest_dir / child.replace('--', '/')
+            dest_file.parent.mkdir(parents=True, exist_ok=True)
+            dest_file.write_bytes(data)
+
+
 def list_dir(tree_map, znode, indent):
     """Print all descendants of a single znode as a tree via recursion."""
 
@@ -418,6 +444,8 @@ def main():
                             help="Delete named config. This action cannot be undone!")
     mode_group.add_argument("--delete-without-confirmation", metavar="NAME",
                             help="Delete named config without asking for confirmation. This action cannot be undone!")
+    mode_group.add_argument("--dump", nargs='?', metavar="DIR", const=".",
+                            help="Dump all the configs stored in the ZooKeeper quorum to file. By default all files will be dumped in the current working directory; use DIR to change this.")
 
     # ZooKeeper settings. These override any settings found in the mrconfig settings file.
     parser.add_argument("--zookeepers", help="Comma-separated address of the ZooKeeper quorum.")
@@ -467,6 +495,11 @@ def main():
         # List all configuration nodes.
         connect(quiet, read_only=True)
         list_configs()
+        close_connection()
+    elif args.dump:
+        # Dump all configuration nodes to file.
+        connect(quiet, read_only=True)
+        dump_configs(args.dump)
         close_connection()
     elif args.set:
         # Set configuration.
