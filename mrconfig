@@ -370,7 +370,7 @@ def edit_config_with_favorite_editor(name, content):
 
     with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as temp_file:
         logging.info("Writing content to temporary file at: {0}".format(temp_file.name))
-        temp_file.write(content)
+        temp_file.write(bytes(content, "UTF-8"))
         temp_file.flush()
         call([EDITOR, temp_file.name])
         temp_file_name = temp_file.name
