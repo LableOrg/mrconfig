@@ -5,8 +5,8 @@ import argparse
 import sys
 import os
 import tempfile
-import io
 import configparser
+import itertools
 import textwrap
 import logging
 from subprocess import call
@@ -37,12 +37,11 @@ zookeeper = None
 def read_from_config(path):
     """Read the options needed to connect to a ZooKeeper quorum from a file."""
 
+    config = configparser.ConfigParser()
     try:
         with open(path, 'r') as conf:
-            conf_str = '[root]\n' + conf.read()
-            conf_fp = io.StringIO(conf_str)
-            config = configparser.RawConfigParser()
-            config.readfp(conf_fp)
+            # Prepend the default section header ([root]) to the config file.
+            config.read_file(itertools.chain(['[root]'], conf), source=path)
     except IOError:
         logging.warn("Failed to read config file at {0}.".format(path))
         return
