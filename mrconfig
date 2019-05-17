@@ -21,16 +21,14 @@ from kazoo.exceptions import NoNodeError, NotEmptyError
 VERSION = "1.0"
 
 # The possible locations of this program's configuration file.
-CONF_IN_HOME_DIR = expanduser('~/.mrconfig')
-ETC_DIRS = ['/etc', '/usr/local/etc']
-CONF_IN_ETC = 'mrconfig.conf'
+CONF_IN_HOME_DIR = expanduser("~/.mrconfig")
+ETC_DIRS = ["/etc", "/usr/local/etc"]
+CONF_IN_ETC = "mrconfig.conf"
 
-EDITOR = os.environ.get('EDITOR', 'vim')
-DEFAULT_TEMP_FILE_EXTENSION = '.txt'
+EDITOR = os.environ.get("EDITOR", "vim")
+DEFAULT_TEMP_FILE_EXTENSION = ".txt"
 
-options = {
-    'configuration_znode': '/'
-}
+options = {"configuration_znode": "/"}
 zookeeper = None
 
 
@@ -39,23 +37,21 @@ def read_from_config(path):
 
     config = configparser.ConfigParser()
     try:
-        with open(path, 'r') as conf:
+        with open(path, "r") as conf:
             # Prepend the default section header ([root]) to the config file.
-            config.read_file(itertools.chain(['[root]'], conf), source=path)
+            config.read_file(itertools.chain(["[root]"], conf), source=path)
     except IOError:
         logging.warn("Failed to read config file at {0}.".format(path))
         return
 
-    for option in ("zookeeper_quorum",
-                   "configuration_znode",
-                   "default_file_extension"):
+    for option in ("zookeeper_quorum", "configuration_znode", "default_file_extension"):
         try:
-            options[option] = config.get('root', option)
-            logging.info("Read option `{0}' from {1}: {2}"
-                         .format(option, path, options[option]))
+            options[option] = config.get("root", option)
+            logging.info(
+                "Read option `{0}' from {1}: {2}".format(option, path, options[option])
+            )
         except configparser.NoOptionError:
-            logging.info("Option `{0}' not configured in settings file."
-                         .format(option))
+            logging.info("Option `{0}' not configured in settings file.".format(option))
 
 
 def assert_options_or_exit(quiet):
@@ -64,12 +60,14 @@ def assert_options_or_exit(quiet):
 
     if "zookeeper_quorum" not in options:
         if not quiet:
-            message = ("I can't connect to the ZooKeeper quorum without its "
-                       "address and (if not specified as part of the connect "
-                       "string) the path to the configuration root znode. "
-                       "Either add a configuration file in ~/.mrconfig or "
-                       "/etc/mrconfig.conf, or pass these parameters as "
-                       "arguments.")
+            message = (
+                "I can't connect to the ZooKeeper quorum without its "
+                "address and (if not specified as part of the connect "
+                "string) the path to the configuration root znode. "
+                "Either add a configuration file in ~/.mrconfig or "
+                "/etc/mrconfig.conf, or pass these parameters as "
+                "arguments."
+            )
             print("Hello there!")
             print("")
             print(textwrap.fill(message, 80))
@@ -81,8 +79,7 @@ def assert_config_znode_or_quit(znode, quiet=False):
 
     if zookeeper.exists(znode) is None:
         if not quiet:
-            print("Znode {0} does not exist (yet).".format(znode),
-                  file=sys.stderr)
+            print("Znode {0} does not exist (yet).".format(znode), file=sys.stderr)
         exit_with_error()
 
 
@@ -105,25 +102,27 @@ def assert_node_is_not_a_virtual_dir_or_quit(conf_node, quiet=False):
     znode = options["configuration_znode"]
     children = zookeeper.get_children(znode)
     for child in children:
-        ref = znode + '/' + child
-        if ref.startswith(conf_node + '--'):
-            print("Node {0} is a (virtual) directory and cannot be "
-                  "overwritten.".format(conf_node))
+        ref = znode + "/" + child
+        if ref.startswith(conf_node + "--"):
+            print(
+                "Node {0} is a (virtual) directory and cannot be "
+                "overwritten.".format(conf_node)
+            )
             exit_with_error()
 
 
 def full_znode_path(znode):
-    parts = options['zookeeper_quorum'].split('/', 1)
-    if znode.startswith('/'):
+    parts = options["zookeeper_quorum"].split("/", 1)
+    if znode.startswith("/"):
         znode = znode[1:]
     if len(parts) == 1:
-        return '/' + znode
+        return "/" + znode
     else:
         chroot = parts[1]
-        if not chroot.endswith('/'):
-            chroot = chroot + '/'
-        if not chroot.startswith('/'):
-            chroot = '/' + chroot
+        if not chroot.endswith("/"):
+            chroot = chroot + "/"
+        if not chroot.startswith("/"):
+            chroot = "/" + chroot
         return chroot + znode
 
 
@@ -133,14 +132,14 @@ def convert_name_to_znode_name(config_name):
     'configs/includes--defaults.yaml').
     """
 
-    if config_name.startswith('/'):
+    if config_name.startswith("/"):
         config_name = config_name[1:]
 
     znode = options["configuration_znode"]
-    if not znode.endswith('/'):
-        znode = znode + '/'
+    if not znode.endswith("/"):
+        znode = znode + "/"
 
-    return znode + config_name.replace('/', '--')
+    return znode + config_name.replace("/", "--")
 
 
 def connect(quiet, read_only=False):
@@ -149,17 +148,21 @@ def connect(quiet, read_only=False):
 
     assert_options_or_exit(quiet)
 
-    logging.info("Connecting to ZooKeeper quorum at {0}. Znode is {1}.".format(
-        options["zookeeper_quorum"], options["configuration_znode"]))
+    logging.info(
+        "Connecting to ZooKeeper quorum at {0}. Znode is {1}.".format(
+            options["zookeeper_quorum"], options["configuration_znode"]
+        )
+    )
 
     global zookeeper
-    zookeeper = KazooClient(hosts=options["zookeeper_quorum"],
-                            read_only=read_only)
+    zookeeper = KazooClient(hosts=options["zookeeper_quorum"], read_only=read_only)
     zookeeper.start()
     if not zookeeper.state == KazooState.CONNECTED:
         if not quiet:
-            print("Connection to ZooKeeper quorum failed, check your "
-                  "settings.", file=sys.stderr)
+            print(
+                "Connection to ZooKeeper quorum failed, check your " "settings.",
+                file=sys.stderr,
+            )
         exit_with_error()
 
     assert_config_znode_or_quit(options["configuration_znode"], quiet)
@@ -180,7 +183,7 @@ def exit_with_error():
 
 def read_from_file_or_stdin(filename):
     """Read the contents of named file, or from stdin if filename is '-'."""
-    if filename == '-':
+    if filename == "-":
         # Read from stdin when - is passed as filename.
         content = sys.stdin.read()
     else:
@@ -196,9 +199,9 @@ def set_config(name, content, quiet):
     assert_config_parent_node_exists_or_quit(quiet)
     assert_node_is_not_a_virtual_dir_or_quit(conf_node, quiet)
 
-    conf_node_exists = (zookeeper.exists(conf_node) is not None)
+    conf_node_exists = zookeeper.exists(conf_node) is not None
 
-    data = content.encode('utf-8')
+    data = content.encode("utf-8")
 
     # noinspection PyBroadException
     try:
@@ -213,8 +216,7 @@ def set_config(name, content, quiet):
         exit_with_error()
     else:
         if not quiet:
-            print("Node {0} (name: {1}) successfully written."
-                  .format(conf_node, name))
+            print("Node {0} (name: {1}) successfully written.".format(conf_node, name))
 
 
 def node_has_children(name):
@@ -239,8 +241,10 @@ def get_config(name, quiet, raise_if_no_such_node=False):
         if raise_if_no_such_node:
             raise
         if not quiet:
-            print("Node does not exist: {0} (name: {1})"
-                  .format(conf_node, name), file=sys.stderr)
+            print(
+                "Node does not exist: {0} (name: {1})".format(conf_node, name),
+                file=sys.stderr,
+            )
         exit_with_error()
     else:
         return data.decode("utf-8").rstrip()
@@ -257,8 +261,7 @@ def delete_node(name, quiet):
         # Node is already gone, but we treat this as success because deleting
         # the node was the goal.
         if not quiet:
-            print("Node does not exist: {0} (name: {1})."
-                  .format(target_node, name))
+            print("Node does not exist: {0} (name: {1}).".format(target_node, name))
     except NotEmptyError:
         # Node contains child nodes.
         if not quiet:
@@ -267,8 +270,9 @@ def delete_node(name, quiet):
         return False
     else:
         if not quiet:
-            print("Successfully deleted node {0} (name: {1})."
-                  .format(target_node, name))
+            print(
+                "Successfully deleted node {0} (name: {1}).".format(target_node, name)
+            )
 
     return True
 
@@ -280,13 +284,13 @@ def color(text, fg=2, bg=None, bold=False, underline=False, italic=False):
     if bg is not None:
         codes.append(str(40 + fg))
     if bold:
-        codes.append('1')
+        codes.append("1")
     if italic:
-        codes.append('3')
+        codes.append("3")
     if underline:
-        codes.append('4')
+        codes.append("4")
 
-    return "\x1b[{0}m{1}\x1b[0m".format(';'.join(codes), text)
+    return "\x1b[{0}m{1}\x1b[0m".format(";".join(codes), text)
 
 
 def list_configs():
@@ -294,8 +298,13 @@ def list_configs():
     node."""
 
     znode = options["configuration_znode"]
-    print(color('Configuration files ({0})'.format(full_znode_path(znode)),
-          fg=None, bold=True))
+    print(
+        color(
+            "Configuration files ({0})".format(full_znode_path(znode)),
+            fg=None,
+            bold=True,
+        )
+    )
 
     children = zookeeper.get_children(znode)
     if len(children) == 0:
@@ -306,16 +315,16 @@ def list_configs():
     tree_map = {}
 
     for child in children:
-        path_parts = child.split('--')
-        parent = ''
+        path_parts = child.split("--")
+        parent = ""
         for part in path_parts:
             if parent not in tree_map:
                 tree_map[parent] = []
             if part not in tree_map[parent]:
                 tree_map[parent].append(part)
-            parent = parent + '/' + part
+            parent = parent + "/" + part
 
-    list_dir(tree_map, '', '')
+    list_dir(tree_map, "", "")
 
 
 def dump_configs(dest_dir_name):
@@ -328,8 +337,7 @@ def dump_configs(dest_dir_name):
     if not dest_dir.exists():
         dest_dir.mkdir(parents=True)
     elif not dest_dir.is_dir():
-        print("A file named {0} already exists.".format(dest_dir_name),
-              file=sys.stderr)
+        print("A file named {0} already exists.".format(dest_dir_name), file=sys.stderr)
         exit_with_error()
 
     for child in children:
@@ -340,7 +348,7 @@ def dump_configs(dest_dir_name):
             # this one.
             pass
         else:
-            dest_file = dest_dir / child.replace('--', '/')
+            dest_file = dest_dir / child.replace("--", "/")
             dest_file.parent.mkdir(parents=True, exist_ok=True)
             dest_file.write_bytes(data)
 
@@ -355,21 +363,19 @@ def list_dir(tree_map, znode, indent):
     for child in children:
         if prev is not None:
             title = prev
-            if znode + '/' + prev in tree_map:
+            if znode + "/" + prev in tree_map:
                 title = color(prev, fg=7, underline=True, italic=True)
             print("{0} {1} {2}".format(indent, color("├", 3), title))
-            if znode + '/' + prev in tree_map:
-                list_dir(tree_map,
-                         znode + '/' + prev,
-                         indent + color(' │ ', 3))
+            if znode + "/" + prev in tree_map:
+                list_dir(tree_map, znode + "/" + prev, indent + color(" │ ", 3))
         prev = child
 
     title = prev
-    if znode + '/' + prev in tree_map:
+    if znode + "/" + prev in tree_map:
         title = color(prev, fg=7, underline=True, italic=True)
     print("{0} {1} {2}".format(indent, color("└", 3), title))
-    if znode + '/' + prev in tree_map:
-        list_dir(tree_map, znode + '/' + prev, indent + '   ')
+    if znode + "/" + prev in tree_map:
+        list_dir(tree_map, znode + "/" + prev, indent + "   ")
 
 
 def edit_config_with_favorite_editor(name, content):
@@ -385,12 +391,11 @@ def edit_config_with_favorite_editor(name, content):
         suffix = file_extension
 
     # Ensure a period is placed before the file extension.
-    if suffix[0] != '.':
-        suffix = '.' + suffix
+    if suffix[0] != ".":
+        suffix = "." + suffix
 
     with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as temp_file:
-        logging.info("Writing content to temporary file at: {0}"
-                     .format(temp_file.name))
+        logging.info("Writing content to temporary file at: {0}".format(temp_file.name))
         temp_file.write(bytes(content, "UTF-8"))
         temp_file.flush()
         call([EDITOR, temp_file.name])
@@ -426,71 +431,100 @@ def main():
 
     # Configure argparse with all the options for this program.
     parser = argparse.ArgumentParser(
-            add_help=False,
-            formatter_class=argparse.RawDescriptionHelpFormatter,
-            description="Manage configuration files stored in a ZooKeeper "
-                        "quorum.",
-            epilog="To write the contents of stdin to a configuration node, "
-                   "do something like this: "
-                   "\n\n"
-                   "    cat MyConf.yml | mrconfig --set NAME -"
-                   "\n\n")
+        add_help=False,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        description="Manage configuration files stored in a ZooKeeper " "quorum.",
+        epilog="To write the contents of stdin to a configuration node, "
+        "do something like this: "
+        "\n\n"
+        "    cat MyConf.yml | mrconfig --set NAME -"
+        "\n\n",
+    )
 
     # General help and usage.
-    parser.add_argument("-h", "--help",
-                        help="Show this help message and exit.",
-                        action="help")
-    parser.add_argument("--version", action="version",
-                        help="Show program's version number and exit.",
-                        version="%(prog)s " + VERSION)
-    parser.add_argument("-v", "--verbose", default=0,
-                        help="Be a bit more chatty about what we're doing.",
-                        action="count")
-    parser.add_argument("-q", "--quiet", action="store_true",
-                        help="Suppress all output (overrides verbosity).")
+    parser.add_argument(
+        "-h", "--help", help="Show this help message and exit.", action="help"
+    )
+    parser.add_argument(
+        "--version",
+        action="version",
+        help="Show program's version number and exit.",
+        version="%(prog)s " + VERSION,
+    )
+    parser.add_argument(
+        "-v",
+        "--verbose",
+        default=0,
+        help="Be a bit more chatty about what we're doing.",
+        action="count",
+    )
+    parser.add_argument(
+        "-q",
+        "--quiet",
+        action="store_true",
+        help="Suppress all output (overrides verbosity).",
+    )
 
     # The main modes of operation. These are mutually exclusive; only one task
     # can be performed at a time.
     mode_group = parser.add_mutually_exclusive_group()
     mode_group.add_argument(
-            "-l", "--list", action="store_true",
-            help="List all the configs stored in the ZooKeeper quorum.")
+        "-l",
+        "--list",
+        action="store_true",
+        help="List all the configs stored in the ZooKeeper quorum.",
+    )
     mode_group.add_argument(
-            "--set", nargs=2, metavar=("NAME", "FILE"),
-            help="Upload a configuration file and place it under this name.")
+        "--set",
+        nargs=2,
+        metavar=("NAME", "FILE"),
+        help="Upload a configuration file and place it under this name.",
+    )
     mode_group.add_argument(
-            "--get", metavar="NAME",
-            help="Download named config and output it to stdout.")
+        "--get", metavar="NAME", help="Download named config and output it to stdout."
+    )
     mode_group.add_argument(
-            "--edit", metavar="NAME",
-            help="Edit named config in an editor.")
+        "--edit", metavar="NAME", help="Edit named config in an editor."
+    )
     mode_group.add_argument(
-            "--move", nargs=2, metavar=("SOURCE", "TARGET"),
-            help="Move a config to a new location.")
+        "--move",
+        nargs=2,
+        metavar=("SOURCE", "TARGET"),
+        help="Move a config to a new location.",
+    )
     mode_group.add_argument(
-            "--copy", nargs=2, metavar=("SOURCE", "TARGET"),
-            help="Copy an existing config to another location.")
+        "--copy",
+        nargs=2,
+        metavar=("SOURCE", "TARGET"),
+        help="Copy an existing config to another location.",
+    )
     mode_group.add_argument(
-            "--delete", metavar="NAME",
-            help="Delete named config. This action cannot be undone!")
+        "--delete",
+        metavar="NAME",
+        help="Delete named config. This action cannot be undone!",
+    )
     mode_group.add_argument(
-            "--delete-without-confirmation", metavar="NAME",
-            help="Delete named config without asking for confirmation. "
-                 "This action cannot be undone!")
+        "--delete-without-confirmation",
+        metavar="NAME",
+        help="Delete named config without asking for confirmation. "
+        "This action cannot be undone!",
+    )
     mode_group.add_argument(
-            "--dump", nargs='?', metavar="DIR", const=".",
-            help="Dump all the configs stored in the ZooKeeper quorum to "
-                 "file. By default all files will be dumped in the "
-                 "current working directory; use DIR to change this.")
+        "--dump",
+        nargs="?",
+        metavar="DIR",
+        const=".",
+        help="Dump all the configs stored in the ZooKeeper quorum to "
+        "file. By default all files will be dumped in the "
+        "current working directory; use DIR to change this.",
+    )
 
     # ZooKeeper settings. These override any settings found in the mrconfig
     # settings file.
     parser.add_argument(
-            "--zookeepers",
-            help="Comma-separated address of the ZooKeeper quorum.")
-    parser.add_argument(
-            "--config-znode",
-            help="Path to the root configuration znode.")
+        "--zookeepers", help="Comma-separated address of the ZooKeeper quorum."
+    )
+    parser.add_argument("--config-znode", help="Path to the root configuration znode.")
 
     if len(sys.argv) == 1:
         # Print help when no arguments are passed to us.
@@ -558,14 +592,13 @@ def main():
         old_config = ""
         try:
             # Read the existing configuration node, if it exists.
-            old_config = get_config(args.edit,
-                                    quiet,
-                                    raise_if_no_such_node=True)
+            old_config = get_config(args.edit, quiet, raise_if_no_such_node=True)
         except NoNodeError:
             # Node does not exist yet. Ask user if they want to create one.
             if not user_confirms_action(
-                    "Configuration node '{0}' does not exist, do you want to "
-                    "create it?", args.edit):
+                "Configuration node '{0}' does not exist, do you want to " "create it?",
+                args.edit,
+            ):
                 exit_with_error()
         new_config = edit_config_with_favorite_editor(args.edit, old_config)
         set_config(args.edit, new_config, quiet)
@@ -573,13 +606,16 @@ def main():
     elif args.move:
         connect(quiet)
         if node_has_children(args.move[0]):
-            print("Node '{0}' has children. Move or delete these first."
-                  .format(args.move[0]))
+            print(
+                "Node '{0}' has children. Move or delete these first.".format(
+                    args.move[0]
+                )
+            )
             sys.exit(1)
         content = get_config(args.move[0], quiet)
         target = args.move[1]
-        if target.endswith('/'):
-            target = target + args.move[0].split('/')[-1]
+        if target.endswith("/"):
+            target = target + args.move[0].split("/")[-1]
         set_config(target, content, quiet)
         delete_node(args.move[0], quiet=True)
         close_connection()
@@ -587,16 +623,16 @@ def main():
         connect(quiet)
         content = get_config(args.copy[0], quiet)
         target = args.copy[1]
-        if target.endswith('/'):
-            target = target + args.copy[0].split('/')[-1]
+        if target.endswith("/"):
+            target = target + args.copy[0].split("/")[-1]
         set_config(target, content, quiet)
         close_connection()
     elif args.delete:
         # Remove a configuration node, but only if the user confirms this
         # action.
         if not user_confirms_action(
-                "Are you sure you want to delete configuration node '{0}'?",
-                args.delete):
+            "Are you sure you want to delete configuration node '{0}'?", args.delete
+        ):
             exit_with_error()
         connect(quiet)
         if not delete_node(args.delete, quiet):
@@ -610,12 +646,14 @@ def main():
         close_connection()
     else:
         if not quiet:
-            print("Please choose the operation you want to perform: "
-                  "--list, --get, --set, or --edit.")
+            print(
+                "Please choose the operation you want to perform: "
+                "--list, --get, --set, or --edit."
+            )
             print()
             parser.print_help()
         sys.exit(1)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
